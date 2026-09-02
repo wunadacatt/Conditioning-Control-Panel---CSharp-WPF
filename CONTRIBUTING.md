@@ -15,8 +15,8 @@ Thank you for your interest in contributing! This document provides guidelines f
 
 ```bash
 # Clone the repository
-git clone https://github.com/CodeBambi/Conditioning-Control-Panel.git
-cd Conditioning-Control-Panel
+git clone https://github.com/CodeBambi/Conditioning-Control-Panel---CSharp-WPF.git
+cd Conditioning-Control-Panel---CSharp-WPF
 
 # Restore packages
 dotnet restore
@@ -102,7 +102,7 @@ refactor: extract SecurityHelper from SettingsService
 
 ## Testing
 
-Currently, the project doesn't have automated tests. Contributions adding tests are welcome!
+Automated tests live in `Tests/ConditioningControlPanel.Tests/` (xUnit). Run them with `dotnet test`. Contributions adding coverage are welcome.
 
 ### Manual Testing
 Before submitting:
