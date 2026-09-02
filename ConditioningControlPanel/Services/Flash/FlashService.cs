@@ -2318,16 +2318,16 @@ namespace ConditioningControlPanel.Services
                     var showThisWindow = DateTime.Now < window.ExpiresAt && !window.IsFadingOut;
                     var targetAlpha = showThisWindow ? maxAlpha : 0.0;
 
-                    // Fade in/out per-window~ uwu (VisualOpacity routes to the hosted root in solid mode)
-                    var currentAlpha = window.VisualOpacity;
+                    // Fade in/out per-window~ uwu (FadeAlpha routes to the hosted root in solid mode)
+                    var currentAlpha = window.FadeAlpha;
                     if (targetAlpha > currentAlpha)
                     {
-                        window.VisualOpacity = Math.Min(targetAlpha, currentAlpha + fadeStep);
+                        window.FadeAlpha = Math.Min(targetAlpha, currentAlpha + fadeStep);
                     }
                     else if (targetAlpha < currentAlpha)
                     {
                         var newAlpha = Math.Max(0.0, currentAlpha - fadeStep);
-                        window.VisualOpacity = newAlpha;
+                        window.FadeAlpha = newAlpha;
 
                         if (newAlpha <= 0)
                         {
@@ -4302,7 +4302,7 @@ namespace ConditioningControlPanel.Services
         /// root's Opacity in solid mode, the layer item's in compositor mode (an unshown
         /// Window's Opacity renders nothing).
         /// </summary>
-        public double VisualOpacity
+        public double FadeAlpha
         {
             get => UsesLayer ? (LayerItem?.Opacity ?? 0.0)
                  : UsesHost ? (HostedRoot?.Opacity ?? 0.0)
