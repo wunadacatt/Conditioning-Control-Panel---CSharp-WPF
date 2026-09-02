@@ -35,7 +35,7 @@ public sealed class FlashLayer : BaseLayer
         public float PaddingPx;
         public float CornerRadiusPx;
 
-        /// <summary>Fade alpha 0..1 - written by FlashService's heartbeat (FlashWindow.FadeAlpha).</summary>
+        /// <summary>Fade alpha 0..1 - written by FlashService's heartbeat (VisualOpacity).</summary>
         public double Opacity;
         /// <summary>Current GIF frame - written by FlashService's heartbeat.</summary>
         public int FrameIndex;

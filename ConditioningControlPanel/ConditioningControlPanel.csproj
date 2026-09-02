@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>ConditioningControlPanel</AssemblyName>
     <RootNamespace>ConditioningControlPanel</RootNamespace>
-    <Version>6.9.0</Version>
+    <Version>6.9.1</Version>
     <Company>CodeBambi</Company>
     <Product>Conditioning Control Panel</Product>
     <Description>A professional visual conditioning application with gamification features.</Description>
@@ -27,11 +27,20 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     
-    <!-- Disable most auto-generated assembly info (we have AssemblyInfo.cs) but enable version -->
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-    <GenerateAssemblyVersionAttribute>true</GenerateAssemblyVersionAttribute>
-    <GenerateAssemblyFileVersionAttribute>true</GenerateAssemblyFileVersionAttribute>
-    <GenerateAssemblyInformationalVersionAttribute>true</GenerateAssemblyInformationalVersionAttribute>
+    <!-- ON. GenerateAssemblyInfo=false switches off the whole generation target, including the
+         per-attribute GenerateAssemblyVersionAttribute/FileVersion/InformationalVersion opt-ins,
+         so the <Version> above never reached the binary: the shipped exe read 0.0.0.0 in file
+         properties and crash dumps. Properties/AssemblyInfo.cs now declares only what the SDK
+         does not generate (Trademark, Culture, ComVisible, ThemeInfo, InternalsVisibleTo);
+         re-adding Title/Description/Configuration/Company/Product/Copyright/Version there is a
+         CS0579 duplicate-attribute error. <Version> stays the single place the number lives. -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <!-- The SDK would otherwise derive this from <AssemblyName> ("ConditioningControlPanel");
+         keep the spaced display title the hand-written attribute used. -->
+    <AssemblyTitle>Conditioning Control Panel</AssemblyTitle>
+    <!-- Without this the SDK appends "+<commit sha>" to InformationalVersion, which is what
+         Explorer shows as "Product version". Keep that field readable: plain 6.9.0. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- Custom Main entry point (originally added for Velopack; kept for control over startup) -->
     <StartupObject>ConditioningControlPanel.App</StartupObject>
@@ -48,9 +57,23 @@
     <!-- Deterministic builds -->
     <Deterministic>true</Deterministic>
 
+    <!-- Agent tooling checks whole git worktrees out under .claude/ inside this folder, i.e. a
+         second copy of every .cs and .xaml in the project. The SDK already excludes those:
+         DefaultExcludesInProjectFolder carries **/.*/** and every default glob (Compile,
+         Page, Resource, None, EmbeddedResource) applies it - verified, a duplicate App.xaml
+         planted there is picked up by none of them. This states the exclusion outright so
+         the build does not silently depend on that implicit dot-directory rule. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);.claude\**</DefaultItemExcludes>
+
     <!-- Suppress CA1416 platform compatibility warnings — this is a Windows-only WPF app -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Platform-agnostic engine (net8.0). Types moved there keep their original namespaces,
+         so consuming files here need no changes. -->
+    <ProjectReference Include="..\CCP.Core\CCP.Core.csproj" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- UI Framework -->
@@ -97,7 +120,6 @@
          dep carries the native lib. Privacy: identical to Vosk — audio stays on device, never sent. -->
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.3" />
     <PackageReference Include="org.k2fsa.sherpa.onnx.runtime.win-x64" Version="1.13.3" />
-    <PackageReference Include="OllamaSharp" Version="5.4.16" />
     
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="3.1.1" />
@@ -117,13 +139,6 @@
     <!-- Embedded Browser -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2535.41" />
 
-    <!-- AI Service -->
-    <PackageReference Include="OpenAI-DotNet" Version="8.6.2" />
-    
-    <!-- SharpDX for Desktop Duplication API (DXGI) -->
-    <PackageReference Include="SharpDX" Version="4.2.0" />
-    <PackageReference Include="SharpDX.DXGI" Version="4.2.0" />
-    <PackageReference Include="SharpDX.Direct3D11" Version="4.2.0" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21">
       <IncludeAssets>all</IncludeAssets>
     </PackageReference>
