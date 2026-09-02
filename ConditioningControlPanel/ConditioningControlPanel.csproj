@@ -17,7 +17,13 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PublishSingleFile>true</PublishSingleFile>
-    <SelfContained>true</SelfContained>
+    <!-- Self-contained packaging is a PUBLISH-only concern. A plain "dotnet build" of the .sln
+         pulls in the non-self-contained Tests project, and a non-self-contained executable
+         cannot reference a self-contained one (NETSDK1151). Default off for build/run; the
+         shipping build turns it on via -p:CcpPublish=true (build-installer.bat). A publish
+         invocation that passes an explicit self-contained CLI flag still overrides this. -->
+    <CcpPublish Condition="'$(CcpPublish)' == ''">false</CcpPublish>
+    <SelfContained>$(CcpPublish)</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     
