@@ -2,11 +2,30 @@
 
 **Date:** 2026-09-01
 **Against:** `main` @ v6.9.0
-**Method:** `git grep` over tracked `.cs` (counts are directional — pattern matches, not a
-semantic audit), plus inspection of the Serilog bootstrap in `App.xaml.cs`.
+**Method:** `git grep` over tracked `.cs` (initial counts were directional pattern matches),
+plus inspection of the Serilog bootstrap in `App.xaml.cs`.
 
-This is a plan, not a change. It exists to be argued over before anyone touches 3,000 call
+This is a plan, not a change. It exists to be argued over before anyone touches ~2,500 call
 sites.
+
+### Maintainer review — 2026-09-01
+
+Reviewed by the maintainer. Diagnosis confirmed: the `Debug` tier is dead and `LogScrubber`
+only runs on bug reports. Corrections folded in below:
+
+- **Exact counts:** 2,538 empty `catch` blocks; ~500 `catch` blocks whose only output is
+  `Debug`.
+- **OCR is clean** — `ScreenOcrService` does not log recognised text. Removed as a PII
+  source.
+- **The confirmed live PII leak is `KeywordTriggerService`**, which logs matched *screen
+  words* at `Information` — i.e. already in the shipped `app-*.log` and reaching bug reports,
+  not a `Debug`-tier problem. This is the first call site to fix.
+- **`crash.log` does not go through Serilog at all** — it is written directly by the global
+  exception handlers. A Serilog sink decorator will not touch it; Phase 1 must wrap that
+  writer separately.
+- **P0 + P1 accepted, conditionally:** the scrubber must rewrite `LogEvent` *properties*
+  (scalar property values), **not** regex the rendered message string, and must ship with a
+  test. **P2** (analyzer pass over the empty catches) is deferred pending Phase 1.
 
 ---
 
@@ -14,19 +33,19 @@ sites.
 
 | Pattern | Count (tracked `.cs`) |
 |---|---|
-| `catch (Exception …)` total | ~4,214 |
-| fully empty `catch {}` / `catch (…) {}` | ~2,159 |
-| `catch { … Logger?.Debug(… }` (first statement is a Debug log) | ~999 |
+| `catch (Exception …)` total | ~4,200 |
+| fully empty `catch {}` / `catch (…) {}` | **2,538** (maintainer count) |
+| `catch` whose only output is `Debug` | **~500** (maintainer count) |
 | `Logger?.Debug(` / `Logger.Debug(` call sites (anywhere) | ~2,405 |
 | `Log.Debug(` static-Serilog call sites (anywhere) | ~536 |
 | `Verbose(` call sites | 0 |
 
-Overlaps are unmeasured. The load-bearing facts:
+The load-bearing facts:
 
-1. **~2–3k places where a caught exception produces no durable record in a shipped build** —
+1. **~3,000 places where a caught exception produces no durable record in a shipped build** —
    either an empty `catch {}` (no log at all) or a `catch` whose only output is `Debug`.
 2. **Every `Debug`/`Verbose` call in the app is discarded, in every build** — see §2. So the
-   ~999 "logged" swallows are, in the field, indistinguishable from the ~2,159 silent ones.
+   ~500 "logged" swallows are, in the field, indistinguishable from the 2,538 silent ones.
 3. There is **no gate**: C# emits no diagnostic for `catch {}`, `CA1031` is off by default,
    and there is no CI. Nothing stops the count from rising.
 
@@ -48,7 +67,7 @@ Wholesale removal or blanket `throw;` would reintroduce the crashes — this mus
 
 ---
 
-## 2. Why the ~1,000 `Debug` swallows emit nothing — and how much else is affected
+## 2. Why the ~500 `Debug` swallows emit nothing — and how much else is affected
 
 ### Root cause
 
@@ -99,42 +118,58 @@ never their values ("no access token for {Provider}", "tokens stored successfull
 codebase uses structured templates almost exclusively (0 interpolated `Debug($"…")` vs
 ~2,239 `Debug("…{X}…", x)`), so redaction *is* mechanically possible.
 
-What lands in `Debug` is **user-identifying context**, because `Debug` is the "what is the
-user doing right now" tier and this app records a lot of it:
+What lands in the logs is **user-identifying context**, because logging is where the app
+records "what is the user doing right now" and there is a lot of it:
 
+- **`KeywordTriggerService`** — logs matched *screen words* at **`Information`**. This is the
+  confirmed live leak: it is already in the shipped `app-*.log` and travels into bug reports.
+  Not a `Debug`-tier issue — fix this call site first, independently of the pipeline work.
 - **Window / tab awareness** — active window titles and browser tab names (the README
   privacy section covers this feature). e.g. a document title or `"Re: … — Gmail"`.
-- **OCR** (`ScreenOcrService`) — screen text scraped for keyword triggers.
 - **Companion chat** — the user's own messages, prompt content, personality config.
 - **File paths** — `C:\Users\<real name>\…`. `LogScrubber` carries a regex *specifically*
   for `Users\<name>`, which tells you this was a known leak.
 - **Account** — display names, Patreon tier, Discord handle.
 
-Someone almost certainly opened an attached `app-*.log` from a bug report, saw a real name
-in a path or a tab title, and raised the floor because that context mostly lives at `Debug`.
+`ScreenOcrService` was checked and **does not** log recognised text — it is not a source.
 
-### The `LogScrubber` gap
+The blanket `MinimumLevel.Information()` change was aimed at the `Debug` tier because that is
+where most of this *used to* sit; it neither stops PII being logged nor helps the one source
+(`KeywordTriggerService`) that logs at `Information`.
+
+### The `LogScrubber` gap — two write paths, neither covered
 
 `Services/LogScrubber` (regex redaction of home paths, emails, OAuth/bearer/Discord tokens,
 `%APPDATA%` vars) is invoked in **exactly one place** — `BugReportService.cs:142` and
-`:178`, at the moment a report is assembled. So the on-disk `app-*.log` is **never
-scrubbed**; it sits in plaintext with 7-day retention, and redaction only happens *if* a
-bug report is filed *and* the assembler runs.
+`:178`, at the moment a report is assembled. Two consequences:
+
+1. The on-disk `app-*.log` (Serilog) is **never scrubbed** — it sits in plaintext with 7-day
+   retention; redaction only happens *if* a bug report is filed *and* the assembler runs.
+2. **`crash.log` does not go through Serilog at all** — it is written directly by the global
+   exception handlers (`DispatcherUnhandledException` / `AppDomain.UnhandledException` /
+   `TaskScheduler.UnobservedTaskException`). A Serilog sink decorator cannot see it. That
+   writer needs the scrubber applied at its own call site.
 
 ### The fix, in order
 
-**1 — primary: stop logging PII, and redact at every sink (a security fix, not hardening).**
+**1 — primary: stop logging PII, and redact both write paths (a security fix, not hardening).**
 
+- **Fix `KeywordTriggerService` now** — it logs matched screen words at `Information`. This
+  is standalone and does not wait on the pipeline work.
 - **Policy:** nothing that identifies a person or reflects their screen / files / messages
   goes into a log at *any* level — IDs, counts, enums, status codes only, never content.
-  Audit the awareness / OCR / companion / path call sites first; they are the known sources.
-- **Enforcement at the sink:** wrap every Serilog sink with the `LogScrubber` regex set (an
-  `ILogEventSink` decorator, or a `Destructuring`/format-time filter). A mistake is then
-  redacted on the way to disk, always — not only if a report is filed. This is the change
-  that actually makes the security concern go away.
-- With scrubbing at the sink, **every level is safe**, and `MinimumLevel` can drop back to
-  `Debug`. The ~999 `Debug` swallows start recording with no per-catch edits; only the
-  ~2,159 *empty* catches still need work.
+  Audit the awareness / companion / path call sites next; they are the known sources.
+- **Redact at the source of truth, the `LogEvent` — not the rendered string.** A
+  `LogScrubber`-backed `ILogEventEnricher` (or sink wrapper) that walks `LogEvent.Properties`
+  and rewrites scalar property *values* in place. String-replacing the final formatted
+  message is rejected: it is lossy, order-dependent, and defeats structured querying.
+  **Ships with a test** (seed a `LogEvent` carrying a home path / token property, assert the
+  written value is redacted and the message template is untouched).
+- **Apply the same scrubber to the `crash.log` writer** at its own call site — it bypasses
+  Serilog, so the enricher above never sees it.
+- With redaction on both write paths, **every level is safe**, and `MinimumLevel` can drop
+  back to `Debug`. The ~500 `Debug` swallows start recording with no per-catch edits; only
+  the 2,538 *empty* catches still need work.
 
 **2 — secondary: level control, now an ergonomics choice, not a security control.**
 
@@ -159,17 +194,22 @@ bug report is filed *and* the assembler runs.
   [CallerLineNumber])` — one call, logs at `Warning` with `{Swallowed:true}` +
   file/line, so every intentional swallow is greppable and located automatically.
 
-### Phase 1 — fix logging at the root: no PII + scrub every sink (1 PR)
+### Phase 1 — fix logging at the root: no PII + redact both write paths (1 PR)
 
-- Wrap every Serilog sink with the `LogScrubber` regex set (`ILogEventSink` decorator or a
-  format-time filter). On-disk logs are now redacted unconditionally, not just on export.
-- Audit and fix the known PII sources (window/tab awareness, OCR, companion chat, user
-  paths) so content is never passed as a log argument in the first place.
-- With scrubbing at the sink, `MinimumLevel` returns to `Debug`; add the
-  `LoggingLevelSwitch` + a "Verbose logging" Settings toggle for control (not containment).
+- **`KeywordTriggerService`**: stop logging matched screen words (or log a hash / count).
+- **Serilog path**: a `LogScrubber`-backed `ILogEventEnricher` that rewrites scalar
+  `LogEvent.Property` values in place — not the rendered string. Applied to the logger
+  config so every sink inherits it. **With a test** (seeded PII property → redacted value,
+  message template intact).
+- **`crash.log` path**: run the same `LogScrubber` at the global exception-handler write
+  site — it does not pass through Serilog.
+- Audit the remaining known PII sources (window/tab awareness, companion chat, user paths)
+  so content is never passed as a log argument in the first place.
+- With both paths redacted, `MinimumLevel` returns to `Debug`; add the `LoggingLevelSwitch`
+  + a "Verbose logging" Settings toggle for control (not containment).
 - Delete or bind the dead `Logging` / `LogLevel` keys in `appsettings.json`.
-- Outcome: the ~999 `Debug`-logging catches record again with no catch edits, and the
-  security concern that motivated `MinimumLevel.Information()` is closed properly.
+- Outcome: the ~500 `Debug`-logging catches record again with no catch edits, and the PII
+  exposure that motivated `MinimumLevel.Information()` is closed on both write paths.
 
 ### Phase 2 — instrument the empty catches (mechanical, days, reviewed per file)
 
@@ -180,7 +220,8 @@ bug report is filed *and* the assembler runs.
   and take `App.Diag.Swallowed(ex, note: "...")` or an explicit `// swallow: <reason>` that
   the analyzer allowlists.
 
-**Worst single files by empty-`catch {}` count:**
+**Worst single files by empty-`catch {}` count** (from the initial pattern grep; the
+maintainer's whole-repo total is 2,538, so per-file figures may run a little higher):
 
 | File | empty catches |
 |---|---|
@@ -217,11 +258,11 @@ so the `try` can't throw). The long tail stays swallowed-but-logged.
 | Phase | Effort | Risk |
 |---|---|---|
 | 0 | ~half a day | none (config + one helper + a count script) |
-| 1 | ~1–2 days | low–medium (sink decorator + PII call-site audit; smoke-test bug report is still clean, verify redaction on a seeded PII line) |
+| 1 | ~2–3 days | low–medium (property-rewrite enricher + test, crash.log writer wrap, `KeywordTriggerService` fix, PII call-site audit; verify a bug report is still clean and a seeded PII property is redacted on both paths) |
 | 2 | days–weeks, incremental | low per file, reviewed; behaviour unchanged (adds logging only) |
 | 3 | ongoing | this is where real bugs get fixed |
 | 4 | continuous | social, not technical |
 
-This is a multi-week effort touching hundreds of files. It needs maintainer buy-in — it is
-not a weekend PR. Phases 0 and 1 alone (≈2 days) close the PII exposure properly and convert
-the app from *blind* to *instrumented*, which is 80% of the value.
+This is a multi-week effort touching hundreds of files. Phases 0 and 1 (≈3 days, maintainer
+pre-approved) close the PII exposure on both write paths and convert the app from *blind* to
+*instrumented* — 80% of the value. Phase 2 is deferred pending Phase 1.
